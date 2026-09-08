@@ -1,0 +1,34 @@
+[project]
+name = "fastauthx-roles"
+version = "0.1.0"
+description = "Global, non tenant role gating. Assign string roles to users, guard routes with require_role. No organizations, no router. Bring your own admin flow for assigning roles, and your own Permission mapping on top."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.141.1",
+    "sqlmodel>=0.0.42",
+]
+
+[dependency-groups]
+dev = [
+    "asyncpg>=0.31.0",
+    "fastauthx",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "python-dotenv>=1.2.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fastauthx_roles"]
+
+[tool.uv.sources]
+fastauthx = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
