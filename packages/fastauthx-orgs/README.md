@@ -6,7 +6,8 @@ global role per user with no tenancy at all, see
 [`fastauthx-roles`](../fastauthx-roles) instead.
 
 ```bash
-pip install fastauthx-orgs
+uv add fastauthx-orgs
+# or: pip install fastauthx-orgs
 ```
 
 ## What it ships

@@ -6,7 +6,8 @@ instead. This package is for apps that just want "is this user an
 admin" without any concept of organizations.
 
 ```bash
-pip install fastauthx-roles
+uv add fastauthx-roles
+# or: pip install fastauthx-roles
 ```
 
 ## What it ships

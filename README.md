@@ -8,11 +8,11 @@ email provider, and your own Alembic (or other) migration setup.
 
 This repo is a workspace containing three independent packages:
 
-| Package | What it does | Install |
-|---|---|---|
-| [`fastauthx`](packages/fastauthx) | Core authentication. Password auth, Google OAuth, JWT access tokens, rotating refresh tokens, email verification, password reset. | `pip install fastauthx` |
-| [`fastauthx-orgs`](packages/fastauthx-orgs) | Multi tenant organizations, membership, rank based role checks, and invitations. Built on top of `fastauthx`. | `pip install fastauthx-orgs` |
-| [`fastauthx-roles`](packages/fastauthx-roles) | Simple global roles for apps that do not need organizations at all. Works with any auth system, not just `fastauthx`. | `pip install fastauthx-roles` |
+| Package | What it does | Install (uv) | Install (pip) |
+|---|---|---|---|
+| [`fastauthx`](packages/fastauthx) | Core authentication. Password auth, Google OAuth, JWT access tokens, rotating refresh tokens, email verification, password reset. | `uv add fastauthx` | `pip install fastauthx` |
+| [`fastauthx-orgs`](packages/fastauthx-orgs) | Multi tenant organizations, membership, rank based role checks, and invitations. Built on top of `fastauthx`. | `uv add fastauthx-orgs` | `pip install fastauthx-orgs` |
+| [`fastauthx-roles`](packages/fastauthx-roles) | Simple global roles for apps that do not need organizations at all. Works with any auth system, not just `fastauthx`. | `uv add fastauthx-roles` | `pip install fastauthx-roles` |
 
 Each package has its own README with a full quickstart, configuration
 reference, and explanation of what it deliberately does not do (and

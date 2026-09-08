@@ -7,7 +7,8 @@ locking you into a specific database engine, email provider, or
 multi tenancy model.
 
 ```bash
-pip install fastauthx
+uv add fastauthx
+# or: pip install fastauthx
 ```
 
 ## Why this exists
@@ -242,7 +243,8 @@ class you need to inherit from. A `ResendEmailSender` ships as an
 optional extra:
 
 ```bash
-pip install "fastauthx[resend]"
+uv add "fastauthx[resend]"
+# or: pip install "fastauthx[resend]"
 ```
 
 ```python
