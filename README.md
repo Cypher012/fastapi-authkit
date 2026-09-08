@@ -12,6 +12,7 @@ email provider, and your own Alembic (or other) migration setup.
 ## Table of contents
 
 - [Packages](#packages)
+- [Installation](#installation)
 - [Which package do I want](#which-package-do-i-want)
 - [Design principles](#design-principles)
 - [Architecture](#architecture)
@@ -23,16 +24,35 @@ email provider, and your own Alembic (or other) migration setup.
 
 This repo is a `uv` workspace containing three independent packages:
 
-| Package | What it does | Install (uv) | Install (pip) |
-|---|---|---|---|
-| [`fastauthx`](packages/fastauthx) | Core authentication. Password auth, Google OAuth, JWT access tokens, rotating refresh tokens, email verification, password reset. | `uv add fastauthx` | `pip install fastauthx` |
-| [`fastauthx-orgs`](packages/fastauthx-orgs) | Multi tenant organizations, membership, rank based role checks, and invitations. Built on top of `fastauthx`. | `uv add fastauthx-orgs` | `pip install fastauthx-orgs` |
-| [`fastauthx-roles`](packages/fastauthx-roles) | Simple global roles for apps that do not need organizations at all. Works with any auth system, not just `fastauthx`. | `uv add fastauthx-roles` | `pip install fastauthx-roles` |
+| Package | What it does |
+|---|---|
+| [`fastauthx`](packages/fastauthx) | Core authentication. Password auth, Google OAuth, JWT access tokens, rotating refresh tokens, email verification, password reset. |
+| [`fastauthx-orgs`](packages/fastauthx-orgs) | Multi tenant organizations, membership, rank based role checks, and invitations. Built on top of `fastauthx`. |
+| [`fastauthx-roles`](packages/fastauthx-roles) | Simple global roles for apps that do not need organizations at all. Works with any auth system, not just `fastauthx`. |
 
-Each package has its own README with a full quickstart, a complete
-runnable example, an endpoint or API reference, a configuration
-reference, an error response reference, security notes, and an FAQ.
-Start there once you know which one you need.
+Each package has its own README with a full quickstart, a complete,
+verified, step by step guide for setting up a new project from
+scratch, an endpoint or API reference, a configuration reference, an
+error response reference, security notes, and an FAQ. Start there once
+you know which one you need.
+
+## Installation
+
+None of these packages are published on PyPI yet, and `fastauthx`
+specifically collides with an unrelated, pre existing package of the
+same name that already is on PyPI. Install directly from this
+repository instead, using `uv`:
+
+```bash
+uv add "fastauthx @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx"
+```
+
+`uv` reads this repository's workspace configuration from the git
+checkout automatically, so `fastauthx-orgs` and `fastauthx-roles`
+resolve their own dependency on `fastauthx` correctly too, with no
+extra setup on your end. See each package's own README for its exact
+install command and for the plain `pip` equivalent, which needs one
+extra step because of the name collision mentioned above.
 
 ## Which package do I want
 
@@ -120,9 +140,16 @@ literally named `users`.
 
 **Why one repo for three packages instead of three repos?**
 While the APIs are still settling, keeping them together makes it
-easier to change all three consistently. They may be split into
-separate repos later once the boundaries are more stable, since each
-already publishes and installs as an independent package today.
+easier to change all three consistently. Each already installs as an
+independent package (see [Installation](#installation)), so splitting
+them into separate repos later, once the boundaries are more stable,
+would not change how anyone depends on them today.
+
+**Why can I not just `pip install fastauthx`?**
+An unrelated package with the same name already exists on PyPI.
+`fastauthx` has not been published there, and installing the bare name
+would silently give you the wrong package. See
+[Installation](#installation).
 
 **Is this production ready?**
 The core flows (password auth, Google OAuth, organizations, roles,

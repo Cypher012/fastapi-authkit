@@ -16,7 +16,7 @@ multi tenancy model.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
-- [Full working example](#full-working-example)
+- [Setting up a new project from scratch](#setting-up-a-new-project-from-scratch)
 - [Endpoints](#endpoints)
 - [Configuration reference](#configuration-reference)
 - [Google OAuth setup](#google-oauth-setup)
@@ -81,10 +81,38 @@ Concretely, that means:
 
 ## Installation
 
+`fastauthx` is not published on PyPI yet, and there is an unrelated,
+pre existing package also called `FastAuthX` on PyPI (PyPI treats
+`FastAuthX` and `fastauthx` as the same name). Do not run a bare
+`pip install fastauthx`, it will install the wrong package. Install
+directly from this repository instead:
+
 ```bash
-uv add fastauthx
-# or: pip install fastauthx
+uv add "fastauthx @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx"
 ```
+
+With `uv`, this is the whole story. `uv` reads this repository's
+workspace configuration from the git checkout automatically, so
+`fastauthx-orgs` and `fastauthx-roles` (see their own READMEs) resolve
+their dependency on `fastauthx` correctly the same way, with no extra
+setup.
+
+With plain `pip`, install `fastauthx` and any of its siblings together,
+in the same command or the same requirements file, so pip's resolver
+sees the git reference before it looks anywhere else for the name:
+
+```bash
+pip install \
+  "fastauthx @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx"
+```
+
+If you `pip install fastauthx-orgs` (or `fastauthx-roles`) by itself,
+without `fastauthx` listed alongside it in the same invocation, pip
+will fetch the unrelated PyPI package for `fastauthx` as a dependency.
+This is a real, confirmed failure mode of plain pip with this
+particular name collision, not a hypothetical one. `uv` does not have
+this problem, and is the installation method this project actually
+tests.
 
 ## Quickstart
 
@@ -129,15 +157,60 @@ async def my_projects(user: Users = Depends(auth.get_current_user)):
     return {"user_id": str(user.id)}
 ```
 
-## Full working example
+## Setting up a new project from scratch
 
-A complete, copy pasteable `main.py` you can run with
-`uvicorn main:app --reload` after setting up a Postgres database and
-running the migration step described in
-[Database and migrations](#database-and-migrations):
+Every command below was actually run, in order, in a fresh directory,
+against a real Postgres database, to write this section. This is not
+an approximation, it is the exact path from an empty folder to a
+running server with a working `/auth/register` endpoint.
+
+### 1. Create the project
+
+```bash
+mkdir my-app && cd my-app
+uv init --app
+```
+
+### 2. Add dependencies
+
+```bash
+uv add fastapi uvicorn sqlmodel asyncpg "alembic[async]" python-dotenv
+uv add "fastauthx @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx"
+```
+
+### 3. Start Postgres
+
+If you do not already have one running, the quickest way is Docker:
+
+```bash
+docker run -d --name my-app-db \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=my_app \
+  -p 5432:5432 postgres:17-alpine
+```
+
+### 4. Configure environment variables
+
+```bash
+cat > .env << 'EOF'
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/my_app
+SECRET_KEY=change-me-to-something-long-and-random
+EOF
+```
+
+Generate a real secret instead of typing one by hand:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+### 5. Write `main.py`
 
 ```python
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -146,7 +219,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from fastauthx import AuthConfig, ConsoleEmailSender, create_auth_router
 from fastauthx.models import Users
 
-DATABASE_URL = os.environ["DATABASE_URL"]  # e.g. postgresql+asyncpg://user:pass@localhost/db
+DATABASE_URL = os.environ["DATABASE_URL"]
 SECRET_KEY = os.environ["SECRET_KEY"]
 
 engine = create_async_engine(DATABASE_URL)
@@ -184,6 +257,82 @@ def root():
 async def me(user: Users = Depends(auth.get_current_user)):
     return {"id": str(user.id), "email": user.email, "name": user.name}
 ```
+
+### 6. Set up Alembic
+
+```bash
+uv run alembic init -t async alembic
+```
+
+Edit `alembic/env.py`. Replace the top of the generated file (everything
+up to `target_metadata = None`) with:
+
+```python
+import asyncio
+import os
+from logging.config import fileConfig
+
+from dotenv import load_dotenv
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlmodel import SQLModel
+
+from alembic import context
+from fastauthx.models import *  # noqa: F403 registers fastauthx's tables
+
+load_dotenv()
+
+config = context.config
+config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = SQLModel.metadata
+```
+
+Leave the rest of the generated file (`run_migrations_offline`,
+`do_run_migrations`, `run_async_migrations`, `run_migrations_online`,
+and the final `if` block) exactly as generated.
+
+Also edit `alembic/script.py.mako` and add one import, so generated
+migrations that reference SQLModel types actually compile:
+
+```python
+from alembic import op
+import sqlalchemy as sa
+import sqlmodel
+${imports if imports else ""}
+```
+
+### 7. Generate and run the migration
+
+```bash
+uv run alembic revision --autogenerate -m "add fastauthx tables"
+uv run alembic upgrade head
+```
+
+You should see `users`, `accounts`, `sessions`, and `verification`
+listed as newly created tables in the command output.
+
+### 8. Run the app
+
+```bash
+uv run uvicorn main:app --reload
+```
+
+### 9. Try it
+
+```bash
+curl -i -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ada@example.com","password":"correct-horse-battery","name":"Ada Lovelace"}'
+```
+
+You should get back `201 Created`, a JSON body with an `access_token`
+and a `user` object, and a `Set-Cookie: refresh_token=...` header. Open
+`http://localhost:8000/docs` to see every endpoint in Swagger UI.
 
 ## Endpoints
 
@@ -388,8 +537,7 @@ class you need to inherit from. A `ResendEmailSender` ships as an
 optional extra:
 
 ```bash
-uv add "fastauthx[resend]"
-# or: pip install "fastauthx[resend]"
+uv add "fastauthx[resend] @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx"
 ```
 
 ```python
@@ -431,7 +579,9 @@ every domain exception into a JSON response of the shape
 
 `fastauthx` ships plain SQLModel table classes and no migrations. Import
 them so they register on your app's metadata, then run your own
-migration:
+migration. See
+[Setting up a new project from scratch](#setting-up-a-new-project-from-scratch)
+for the full, verified `alembic/env.py` setup.
 
 ```python
 from fastauthx.models import Users, Accounts, Sessions, Verification  # noqa: F401

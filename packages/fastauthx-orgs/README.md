@@ -15,7 +15,7 @@ global role per user with no tenancy at all, see
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
-- [Full working example](#full-working-example)
+- [Setting up a new project from scratch](#setting-up-a-new-project-from-scratch)
 - [Endpoints](#endpoints)
 - [Request and response examples](#request-and-response-examples)
 - [Invitations in detail](#invitations-in-detail)
@@ -61,9 +61,23 @@ package expects you to use instead.
 
 ## Installation
 
+Same caveat as `fastauthx`: this is not on PyPI, and `fastauthx-orgs`
+depends on `fastauthx`, which collides with an unrelated package of the
+same name on PyPI. Use `uv`, which resolves this correctly on its own
+by reading this repository's workspace configuration:
+
 ```bash
-uv add fastauthx-orgs
-# or: pip install fastauthx-orgs
+uv add "fastauthx-orgs @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx-orgs"
+```
+
+If you use plain `pip`, you must list `fastauthx` explicitly alongside
+it in the same command, or pip will silently fetch the wrong,
+unrelated `fastauthx` from PyPI as a dependency of this package:
+
+```bash
+pip install \
+  "fastauthx @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx" \
+  "fastauthx-orgs @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx-orgs"
 ```
 
 ## Quickstart
@@ -98,12 +112,31 @@ app.include_router(orgs.router)
 orgs.install_exception_handlers(app)
 ```
 
-## Full working example
+## Setting up a new project from scratch
 
-Builds directly on `fastauthx`'s full example:
+This continues directly from `fastauthx`'s own
+[Setting up a new project from scratch](../fastauthx#setting-up-a-new-project-from-scratch),
+which you should follow first. Every command below was actually run
+against a real Postgres database to write this section.
+
+### 1. Add the dependency
+
+From the same project you set up for `fastauthx`:
+
+```bash
+uv add "fastauthx-orgs @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx-orgs"
+```
+
+### 2. Update `main.py`
+
+Replace `main.py` with:
 
 ```python
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -157,6 +190,48 @@ async def delete_project(
 ):
     return {"deleted": project_id, "by_role": membership.role}
 ```
+
+### 3. Add its tables to your migration
+
+Edit `alembic/env.py`, adding one import right after the `fastauthx`
+one:
+
+```python
+from fastauthx.models import *  # noqa: F403 registers fastauthx's tables
+from fastauthx_orgs.models import *  # noqa: F403 registers fastauthx-orgs' tables
+```
+
+### 4. Generate and run the migration
+
+```bash
+uv run alembic revision --autogenerate -m "add fastauthx-orgs tables"
+uv run alembic upgrade head
+```
+
+You should see `organizations`, `organization_memberships`, and
+`invitations` listed as newly created tables.
+
+### 5. Run the app and try it
+
+```bash
+uv run uvicorn main:app --reload
+```
+
+Register a user (this fires the hook and creates their organization
+automatically), then list their organizations:
+
+```bash
+RESPONSE=$(curl -s -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ada@example.com","password":"correct-horse-battery","name":"Ada Lovelace"}')
+
+TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -s http://localhost:8000/orgs -H "Authorization: Bearer $TOKEN"
+```
+
+You should get back a list containing one organization, named
+`"Ada Lovelace's Organization"`, with the new user as its `OWNER`.
 
 ## Endpoints
 

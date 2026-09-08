@@ -15,7 +15,7 @@ admin" without any concept of organizations.
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
-- [Full working example](#full-working-example)
+- [Setting up a new project from scratch](#setting-up-a-new-project-from-scratch)
 - [API reference](#api-reference)
 - [Building your own permission mapping](#building-your-own-permission-mapping)
 - [Security notes](#security-notes)
@@ -70,10 +70,18 @@ universal ordering across arbitrary, app defined role strings.
 
 ## Installation
 
+This package does not depend on `fastauthx` at runtime, so it does not
+hit the PyPI name collision described in `fastauthx`'s README. It is
+still not published on PyPI itself, so install it from this repository:
+
 ```bash
-uv add fastauthx-roles
-# or: pip install fastauthx-roles
+uv add "fastauthx-roles @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx-roles"
+# or: pip install "fastauthx-roles @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx-roles"
 ```
+
+If you are also using `fastauthx` in the same project (the common
+case), see its README for why you should list it alongside anything
+that depends on it when using plain `pip`.
 
 ## Quickstart
 
@@ -97,20 +105,40 @@ async def ban_user(
     ...
 ```
 
-## Full working example
+## Setting up a new project from scratch
 
-Uses `fastauthx` for `get_current_user`, but any FastAPI auth setup
-works here in its place:
+This continues directly from `fastauthx`'s own
+[Setting up a new project from scratch](../fastauthx#setting-up-a-new-project-from-scratch),
+which you should follow first. `fastauthx` is used here for
+`get_current_user`, but any FastAPI auth setup works in its place, this
+package does not require it specifically. Every command below was
+actually run against a real Postgres database to write this section.
+
+### 1. Add the dependency
+
+From the same project you set up for `fastauthx`:
+
+```bash
+uv add "fastauthx-roles @ git+https://github.com/Cypher012/fastapi-authkit.git#subdirectory=packages/fastauthx-roles"
+```
+
+### 2. Update `main.py`
+
+Replace `main.py` with:
 
 ```python
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from fastauthx import AuthConfig, ConsoleEmailSender, create_auth_router
-from fastauthx_roles import assign_role, create_roles_kit, get_user_roles
+from fastauthx_roles import create_roles_kit
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 SECRET_KEY = os.environ["SECRET_KEY"]
@@ -138,12 +166,95 @@ roles = create_roles_kit(get_session=get_session, get_current_user=auth.get_curr
 @app.get("/admin/dashboard")
 async def admin_dashboard(_=Depends(roles.require_role("admin"))):
     return {"status": "welcome, admin"}
+```
+
+### 3. Add its table to your migration
+
+Edit `alembic/env.py`, adding one import right after the `fastauthx`
+one:
+
+```python
+from fastauthx.models import *  # noqa: F403 registers fastauthx's tables
+from fastauthx_roles.models import *  # noqa: F403 registers fastauthx-roles' table
+```
+
+### 4. Generate and run the migration
+
+```bash
+uv run alembic revision --autogenerate -m "add fastauthx-roles table"
+uv run alembic upgrade head
+```
+
+You should see `user_roles` listed as a newly created table.
+
+### 5. Write a script to grant the role
+
+This package deliberately has no endpoint for this (see
+[What it deliberately does not ship](#what-it-deliberately-does-not-ship)).
+Write a small script instead:
+
+```python
+# assign_admin.py
+import asyncio
+import os
+import sys
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from fastauthx.models import Users
+from fastauthx_roles import assign_role
 
 
-@app.get("/me/roles")
-async def my_roles(user=Depends(auth.get_current_user)):
-    async for session in get_session():
-        return {"roles": await get_user_roles(session, user.id)}
+async def main(email: str) -> None:
+    engine = create_async_engine(os.environ["DATABASE_URL"])
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_maker() as session:
+        result = await session.exec(select(Users).where(Users.email == email))
+        user = result.first()
+        if user is None:
+            print(f"No user with email {email}")
+            return
+        await assign_role(session, user.id, "admin")
+        print(f"{email} is now an admin")
+
+
+if __name__ == "__main__":
+    asyncio.run(main(sys.argv[1]))
+```
+
+### 6. Run the app and try it
+
+```bash
+uv run uvicorn main:app --reload
+```
+
+Register a user, confirm the dashboard is forbidden, grant the role,
+then confirm it works:
+
+```bash
+RESPONSE=$(curl -s -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"ada@example.com","password":"correct-horse-battery","name":"Ada Lovelace"}')
+
+TOKEN=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -w "\nstatus=%{http_code}\n" http://localhost:8000/admin/dashboard -H "Authorization: Bearer $TOKEN"
+# {"detail":"You do not have the required role."}
+# status=403
+
+uv run python assign_admin.py ada@example.com
+# ada@example.com is now an admin
+
+curl -s -w "\nstatus=%{http_code}\n" http://localhost:8000/admin/dashboard -H "Authorization: Bearer $TOKEN"
+# {"status":"welcome, admin"}
+# status=200
 ```
 
 ## API reference
