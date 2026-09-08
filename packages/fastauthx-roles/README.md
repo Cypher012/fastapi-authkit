@@ -1,30 +1,47 @@
 # fastauthx-roles
 
+![Python](https://img.shields.io/badge/python-3.13%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 Global, non tenant role gating for FastAPI apps. For multi tenant,
 per organization roles, see [`fastauthx-orgs`](../fastauthx-orgs)
 instead. This package is for apps that just want "is this user an
 admin" without any concept of organizations.
 
-```bash
-uv add fastauthx-roles
-# or: pip install fastauthx-roles
-```
+## Table of contents
+
+- [What it ships](#what-it-ships)
+- [What it deliberately does not ship](#what-it-deliberately-does-not-ship)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+- [Full working example](#full-working-example)
+- [API reference](#api-reference)
+- [Building your own permission mapping](#building-your-own-permission-mapping)
+- [Security notes](#security-notes)
+- [Database and migrations](#database-and-migrations)
+- [Testing](#testing)
+- [FAQ](#faq)
+- [License](#license)
 
 ## What it ships
 
-- One table, `user_roles(user_id, role)`. `role` is a plain string, not
-  a fixed enum, because a global role vocabulary varies too much per
-  app to hardcode. One app wants `ADMIN` / `USER`, another wants
-  `SUPERADMIN` / `SUPPORT` / `USER`, another just wants a `staff` flag.
-  A user can hold more than one role.
-- `assign_role(session, user_id, role)` and
-  `revoke_role(session, user_id, role)`, both idempotent.
-- `get_user_roles(session, user_id)`.
-- `create_roles_kit(get_session, get_current_user)`, which returns
-  `require_role(*roles)`, a dependency with OR semantics: it passes if
-  the caller holds at least one of the listed roles. There is no
-  hierarchy, since there is no universal ordering across arbitrary
-  app defined role strings.
+| Piece | What it does |
+|---|---|
+| `UserRole` | One table: `user_roles(user_id, role)`. A user can hold more than one role. |
+| `assign_role(session, user_id, role)` | Idempotent. Assigning a role a user already has is a no-op. |
+| `revoke_role(session, user_id, role)` | Idempotent. Revoking a role a user does not have is a no-op. |
+| `get_user_roles(session, user_id)` | Returns the list of role strings a user holds. |
+| `create_roles_kit(get_session, get_current_user)` | Returns `require_role(*roles)`, a dependency with OR semantics. |
+
+`role` is a plain string, not a fixed enum, because a global role
+vocabulary varies too much per app to hardcode. One app wants `ADMIN` /
+`USER`, another wants `SUPERADMIN` / `SUPPORT` / `USER`, another just
+wants a `staff` flag.
+
+`require_role("admin", "support")` passes if the caller holds at least
+one of the listed roles. There is no hierarchy, since there is no
+universal ordering across arbitrary, app defined role strings.
 
 ## What it deliberately does not ship
 
@@ -43,6 +60,20 @@ uv add fastauthx-roles
   something is the foreign key on `user_roles.user_id`, which points at
   a table literally named `users` (for example, the one `fastauthx`
   provides).
+
+## Requirements
+
+- Python 3.13 or later
+- PostgreSQL
+- Any FastAPI dependency that resolves the current user, from
+  `fastauthx` or otherwise, as long as the returned object has an `.id`
+
+## Installation
+
+```bash
+uv add fastauthx-roles
+# or: pip install fastauthx-roles
+```
 
 ## Quickstart
 
@@ -66,12 +97,81 @@ async def ban_user(
     ...
 ```
 
-Then register the table and migrate:
+## Full working example
+
+Uses `fastauthx` for `get_current_user`, but any FastAPI auth setup
+works here in its place:
 
 ```python
-from fastauthx_roles.models import UserRole  # noqa: F401
-# now run: alembic revision --autogenerate -m "add fastauthx-roles table"
+import os
+
+from fastapi import Depends, FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from fastauthx import AuthConfig, ConsoleEmailSender, create_auth_router
+from fastauthx_roles import assign_role, create_roles_kit, get_user_roles
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+SECRET_KEY = os.environ["SECRET_KEY"]
+
+engine = create_async_engine(DATABASE_URL)
+session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+async def get_session():
+    async with session_maker() as session:
+        yield session
+
+
+config = AuthConfig(secret_key=SECRET_KEY, frontend_url="http://localhost:3000", secure_cookies=False)
+
+app = FastAPI(title="my app")
+
+auth = create_auth_router(config, get_session=get_session, email_sender=ConsoleEmailSender())
+app.include_router(auth.router)
+auth.install_exception_handlers(app)
+
+roles = create_roles_kit(get_session=get_session, get_current_user=auth.get_current_user)
+
+
+@app.get("/admin/dashboard")
+async def admin_dashboard(_=Depends(roles.require_role("admin"))):
+    return {"status": "welcome, admin"}
+
+
+@app.get("/me/roles")
+async def my_roles(user=Depends(auth.get_current_user)):
+    async for session in get_session():
+        return {"roles": await get_user_roles(session, user.id)}
 ```
+
+## API reference
+
+### `assign_role(session, user_id, role) -> None`
+
+Adds a role to a user. Idempotent: assigning a role the user already
+has does nothing and does not raise.
+
+### `revoke_role(session, user_id, role) -> None`
+
+Removes a role from a user. Idempotent: revoking a role the user does
+not have does nothing and does not raise.
+
+### `get_user_roles(session, user_id) -> list[str]`
+
+Returns every role string currently assigned to the user, in no
+particular order.
+
+### `create_roles_kit(*, get_session, get_current_user) -> RolesKit`
+
+Returns a `RolesKit` with two attributes:
+
+- `get_current_user_roles`, a FastAPI dependency returning
+  `list[str]` for whoever `get_current_user` resolves to.
+- `require_role(*roles: str)`, a dependency factory. The dependency it
+  returns raises `HTTPException(403)` unless the caller holds at least
+  one of the given role strings.
 
 ## Building your own permission mapping
 
@@ -98,6 +198,26 @@ def require_permission(permission: Permission):
     return dependency
 ```
 
+## Security notes
+
+- Role assignment is not exposed as a public endpoint by this package.
+  If you add one yourself, gate it behind your own admin authentication,
+  since granting a role is a privilege escalation sensitive action.
+- `require_role` fails closed: if `get_current_user` raises (for
+  example, an invalid or missing token), that exception propagates and
+  the request never reaches the route.
+
+## Database and migrations
+
+```python
+from fastauthx_roles.models import UserRole  # noqa: F401
+```
+
+```bash
+alembic revision --autogenerate -m "add fastauthx-roles table"
+alembic upgrade head
+```
+
 ## Testing
 
 A real Postgres instance, no mocks. The test suite creates its one
@@ -109,6 +229,25 @@ migrated schema.
 export POSTGRES_USER=... POSTGRES_PASSWORD=... POSTGRES_DB=...
 uv run pytest
 ```
+
+## FAQ
+
+**Can a user have more than one role?**
+Yes. `user_roles` has a unique constraint on `(user_id, role)`, not on
+`user_id` alone, so a user can hold as many roles as you assign.
+
+**Do I need `fastauthx` to use this package?**
+No. `create_roles_kit` only needs a `get_current_user` dependency that
+resolves to something with an `.id`. Any auth library, or your own
+hand rolled one, works.
+
+**How do I let users manage roles through an API instead of a script?**
+Write the endpoint yourself, calling `assign_role` / `revoke_role`, and
+gate it with your own `require_role("admin")` check. This is a
+deliberate omission, not a missing feature: role assignment endpoints
+carry enough app specific authorization nuance (who can grant what to
+whom) that a one size fits all version would likely be wrong for your
+case.
 
 ## License
 
